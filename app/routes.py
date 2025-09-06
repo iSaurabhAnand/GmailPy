@@ -195,7 +195,6 @@ TEMPLATE = """
             {% endif %}
         </div>
 
-        {% if email.needs_followup %}
         <div class="actions">
             <button class="follow-up-btn" onclick="sendFollowUp(this, '{{ email.id }}', '{{ email.thread_id }}', '{{ email.to }}', '{{ email.subject }}')">
                 Send Follow-up
@@ -203,7 +202,6 @@ TEMPLATE = """
             <span class="success">✓ Sent!</span>
             <span class="error">Failed to send</span>
         </div>
-        {% endif %}
     </div>
     {% endfor %}
 </body>
