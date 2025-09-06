@@ -140,10 +140,10 @@ Thanks,
     raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
     
     try:
-        service.users().messages().send(
-            userId='me',
-            body={'raw': raw_message, 'threadId': thread_id}
-        ).execute()
+        # service.users().messages().send(
+        #     userId='me',
+        #     body={'raw': raw_message, 'threadId': thread_id}
+        # ).execute()
         return True
     except Exception as e:
         print(f"Error sending email: {e}")

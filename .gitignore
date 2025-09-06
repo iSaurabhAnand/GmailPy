@@ -5,3 +5,4 @@ token.json
 /app/__pycache__
 *.pyc
 *.log
+*.pyc
