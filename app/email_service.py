@@ -2,6 +2,9 @@ import datetime
 from email.mime.text import MIMEText
 import base64
 
+from app.ai_service import AIService
+import json
+
 def get_unreplied_sent_emails(service):
     """Fetch sent emails from the last 30 days that haven't received replies."""
     thirty_days_ago = int((datetime.datetime.utcnow() - datetime.timedelta(days=30)).timestamp())
@@ -12,6 +15,9 @@ def get_unreplied_sent_emails(service):
     # Get user's email for identifying self-sent messages
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
+    
+    # Initialize AI service
+    ai_service = AIService()
     
     messages = results.get('messages', [])
     for msg in messages:
@@ -56,15 +62,52 @@ def get_unreplied_sent_emails(service):
                     break
         
         if not has_reply:
+            # Analyze thread with AI
             snippet = sent_msg.get('snippet', '')
-            unreplied_emails.append({
-                'id': msg['id'],
-                'thread_id': thread['id'],
-                'subject': subject,
-                'to': to,
-                'date': date,
-                'snippet': snippet
-            })
+            thread_content = '\n'.join([
+                m.get('snippet', '') for m in thread_messages
+            ])
+            
+            days_since_sent = (datetime.datetime.utcnow() - 
+                             datetime.datetime.fromtimestamp(sent_msg_date)).days
+            
+            ai_analysis = ai_service.analyze_thread_urgency(thread_content, days_since_sent)
+            try:
+                analysis = json.loads(ai_analysis)
+                if analysis.get('needs_followup', False):
+                    # Generate AI follow-up content
+                    recipient_name = to.split('<')[0].strip()
+                    followup_content = ai_service.generate_followup_email(
+                        thread_content,
+                        recipient_name,
+                        snippet,
+                        days_since_sent
+                    )
+                    
+                    unreplied_emails.append({
+                        'id': msg['id'],
+                        'thread_id': thread['id'],
+                        'subject': subject,
+                        'to': to,
+                        'date': date,
+                        'snippet': snippet,
+                        'urgency': analysis.get('urgency', 'medium'),
+                        'reason': analysis.get('reason', ''),
+                        'ai_followup': followup_content
+                    })
+            except json.JSONDecodeError:
+                # Fallback if AI analysis fails
+                unreplied_emails.append({
+                    'id': msg['id'],
+                    'thread_id': thread['id'],
+                    'subject': subject,
+                    'to': to,
+                    'date': date,
+                    'snippet': snippet,
+                    'urgency': 'unknown',
+                    'reason': 'AI analysis failed',
+                    'ai_followup': None
+                })
     
     return unreplied_emails
 
