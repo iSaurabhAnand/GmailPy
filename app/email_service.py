@@ -9,43 +9,64 @@ def get_unreplied_sent_emails(service):
     results = service.users().messages().list(userId='me', q=query, maxResults=20).execute()
     unreplied_emails = []
     
+    # Get user's email for identifying self-sent messages
+    profile = service.users().getProfile(userId='me').execute()
+    user_email = profile['emailAddress']
+    
     messages = results.get('messages', [])
     for msg in messages:
-        msg_data = service.users().messages().get(userId='me', id=msg['id']).execute()
-        thread_id = msg_data.get('threadId')
-        sent_msg_internal_date = int(msg_data.get('internalDate', '0')) // 1000
-        thread = service.users().messages().list(userId='me', q=f'threadId:{thread_id}').execute()
-        thread_msgs = thread.get('messages', [])
+        # Get the full thread
+        thread = service.users().threads().get(userId='me', id=msg['threadId']).execute()
+        thread_messages = thread.get('messages', [])
         
-        # Get email details
-        headers = msg_data.get('payload', {}).get('headers', [])
+        # Check if the first message in thread is from the user
+        first_msg = thread_messages[0]
+        first_msg_headers = first_msg['payload']['headers']
+        from_header = next((h['value'] for h in first_msg_headers if h['name'].lower() == 'from'), '')
+        if user_email not in from_header:
+            continue  # Skip if user didn't initiate the thread
+        
+        # Find our sent message in the thread
+        sent_msg = None
+        for tmsg in thread_messages:
+            if tmsg['id'] == msg['id']:
+                sent_msg = tmsg
+                break
+                
+        if not sent_msg:
+            continue
+            
+        # Get sent message details
+        sent_msg_date = int(sent_msg['internalDate']) // 1000
+        headers = sent_msg['payload']['headers']
         subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
         to = next((h['value'] for h in headers if h['name'].lower() == 'to'), 'Unknown')
-        date = datetime.datetime.fromtimestamp(sent_msg_internal_date).strftime('%Y-%m-%d %H:%M:%S')
+        date = datetime.datetime.fromtimestamp(sent_msg_date).strftime('%Y-%m-%d %H:%M:%S')
         
-        if not _has_replies(thread_msgs, msg['id'], sent_msg_internal_date):
-            snippet = msg_data.get('snippet', '')
+        # Check for replies after our sent message
+        has_reply = False
+        for tmsg in thread_messages:
+            msg_date = int(tmsg['internalDate']) // 1000
+            if msg_date > sent_msg_date:  # Message is after our sent message
+                headers = tmsg['payload']['headers']
+                from_header = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
+                # Check if message is from someone else (not us)
+                if user_email not in from_header:
+                    has_reply = True
+                    break
+        
+        if not has_reply:
+            snippet = sent_msg.get('snippet', '')
             unreplied_emails.append({
                 'id': msg['id'],
-                'thread_id': thread_id,
+                'thread_id': thread['id'],
                 'subject': subject,
                 'to': to,
                 'date': date,
                 'snippet': snippet
             })
-            
+    
     return unreplied_emails
-
-def _has_replies(thread_msgs, original_msg_id, sent_msg_internal_date):
-    """Check if a message has any replies."""
-    for tmsg in thread_msgs:
-        if tmsg['id'] != original_msg_id and int(tmsg.get('internalDate', '0')) // 1000 > sent_msg_internal_date:
-            # If the sender is not me, it's a reply
-            headers = tmsg.get('payload', {}).get('headers', [])
-            from_header = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
-            if 'me' not in from_header:
-                return True
-    return False
 
 def send_followup_email(service, to, subject, thread_id):
     """Send a follow-up email for an unreplied message."""

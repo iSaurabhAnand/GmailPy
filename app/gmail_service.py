@@ -22,7 +22,11 @@ def get_gmail_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
-            creds = flow.run_local_server(port=8088)
+            creds = flow.run_local_server(
+                port=8088,
+                access_type='offline',
+                include_granted_scopes='true'
+            )
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
     
