@@ -1,0 +1,3 @@
+# Ignore token.json file for Gmail API authentication
+
+token.json
