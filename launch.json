@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Gmail App",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "USE_AI": "false",
+                "GMAIL_CREDENTIALS_PATH": "$/Users/saurabhanand/CoPilotProjects/Creds/client_secret_862719068692-t4b18lmu6p1rkflh42eg787fiegruuh5.apps.googleusercontent.com.json"
+            }
+        }
+    ]
+}

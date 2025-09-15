@@ -1,7 +1,9 @@
+
 from flask import render_template_string, request, jsonify
 from app import app
 from app.gmail_service import get_gmail_service
 from app.email_service import get_threads_to_follow_up, send_followup_email
+from app.config import DISABLE_SEND_FOLLOWUP
 
 # HTML template for the main page
 TEMPLATE = """
@@ -219,6 +221,9 @@ def index():
 def send_followup():
     """Handle follow-up email requests."""
     data = request.json
+    # Use a flag from config to disable sending follow-up emails
+    if DISABLE_SEND_FOLLOWUP:
+        return jsonify({'success': False, 'error': 'Sending follow-up emails is disabled by flag.'})
     service = get_gmail_service()
     success = send_followup_email(
         service,

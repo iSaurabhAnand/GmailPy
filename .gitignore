@@ -6,3 +6,5 @@ token.json
 *.pyc
 *.log
 *.pyc
+followup_report.csv
+*.csv

@@ -1,23 +1,14 @@
+from app.report_service import generate_followup_report
+from app.config import FOLLOWUP_TEMPLATES
 
 import datetime
 import os
 import base64
 from email.mime.text import MIMEText
 from typing import List, Dict
+from app.config import MIN_DAYS, MAX_DAYS, BATCH_SIZE, MAX_FOLLOW_UPS
 
 
-# Configurable constants
-MIN_DAYS = int(os.getenv('MIN_DAYS', 2))
-MAX_DAYS = int(os.getenv('MAX_DAYS', 30))
-BATCH_SIZE = int(os.getenv('BATCH_SIZE', 20))
-MAX_FOLLOW_UPS = int(os.getenv('MAX_FOLLOW_UPS', 3))
-
-# Configurable follow-up templates (2 lines each)
-FOLLOWUP_TEMPLATES = [
-    os.getenv('FOLLOWUP_TEMPLATE_1', "Just checking in to see if you had a chance to review my previous email.\nLet me know if you need anything from me."),
-    os.getenv('FOLLOWUP_TEMPLATE_2', "Wanted to follow up on my last message.\nPlease let me know if you have any questions."),
-    os.getenv('FOLLOWUP_TEMPLATE_3', "Hope you're well!\nJust following up regarding my earlier email.")
-]
 
 def get_threads_to_follow_up(service) -> List[Dict]:
     """
@@ -52,8 +43,8 @@ def get_threads_to_follow_up(service) -> List[Dict]:
                 # Filter: first email subject must start with 'Interest in'
                 if thread_messages:
                     first_subject = get_header(thread_messages[0], 'subject').strip().lower()
-                    if not first_subject.startswith('interest in'):
-                        continue
+                    #if not first_subject.startswith('interest in'):
+                        #continue
                 # Check last message date
                 last_msg = thread_messages[-1]
                 last_msg_date = int(last_msg['internalDate']) // 1000
@@ -75,16 +66,25 @@ def get_threads_to_follow_up(service) -> List[Dict]:
         page_token = results.get('nextPageToken')
         if not page_token:
             break
+    # Generate CSV report after batch processing
+    from app.report_service import generate_followup_report
+    generate_followup_report(threads_to_follow_up)
     return threads_to_follow_up
 
 def is_from_user(message, user_email: str) -> bool:
-    headers = message['payload']['headers']
-    from_header = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
-    return user_email in from_header
+    try:
+        headers = message.get('payload', {}).get('headers', [])
+        from_header = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
+        return user_email in from_header
+    except (KeyError, AttributeError):
+        return False
 
 def get_header(message, name: str) -> str:
-    headers = message['payload']['headers']
-    return next((h['value'] for h in headers if h['name'].lower() == name.lower()), '')
+    try:
+        headers = message.get('payload', {}).get('headers', [])
+        return next((h['value'] for h in headers if h['name'].lower() == name.lower()), '')
+    except (KeyError, AttributeError):
+        return ''
 
 def count_followups(messages: List[Dict]) -> int:
     """Count how many follow-ups have been sent in this thread."""
@@ -144,7 +144,7 @@ def send_followup_email(service, to: str, subject: str, thread_id: str) -> bool:
                 1 for m in thread['messages']
                 if m.get('snippet', '').lower().find('follow up') != -1
             )
-        template_idx = min(followup_count, len(FOLLOWUP_TEMPLATES)-1)
+        template_idx = followup_count % len(FOLLOWUP_TEMPLATES)
         template_body = FOLLOWUP_TEMPLATES[template_idx]
         salutation = f"Hi {receiver_name}," if receiver_name else "Hi," 
         message_text = f"{salutation}\n\n{template_body}\n\nThanks,\n{sender_name}"
