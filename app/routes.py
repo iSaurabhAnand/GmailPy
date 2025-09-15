@@ -1,7 +1,7 @@
 from flask import render_template_string, request, jsonify
 from app import app
 from app.gmail_service import get_gmail_service
-from app.email_service import get_unreplied_sent_emails, send_followup_email
+from app.email_service import get_threads_to_follow_up, send_followup_email
 
 # HTML template for the main page
 TEMPLATE = """
@@ -212,7 +212,7 @@ TEMPLATE = """
 def index():
     """Render the main page with list of unreplied emails."""
     service = get_gmail_service()
-    unreplied_emails = get_unreplied_sent_emails(service)
+    unreplied_emails = get_threads_to_follow_up(service)
     return render_template_string(TEMPLATE, emails=unreplied_emails)
 
 @app.route('/send-followup', methods=['POST'])
