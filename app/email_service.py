@@ -19,7 +19,7 @@ def get_threads_to_follow_up(service) -> List[Dict]:
     now = datetime.datetime.utcnow()
     after_ts = int((now - datetime.timedelta(days=MAX_DAYS)).timestamp())
     before_ts = int((now - datetime.timedelta(days=MIN_DAYS)).timestamp())
-    query = f"label:SENT after:{after_ts} before:{before_ts}"
+    query = f"label:SENT after:{after_ts} before:{before_ts} subject:'Interest in'"
 
     threads_to_follow_up = []
     page_token = None
@@ -43,8 +43,8 @@ def get_threads_to_follow_up(service) -> List[Dict]:
                 # Filter: first email subject must start with 'Interest in'
                 if thread_messages:
                     first_subject = get_header(thread_messages[0], 'subject').strip().lower()
-                    #if not first_subject.startswith('interest in'):
-                        #continue
+                    if not first_subject.startswith('interest in'):
+                        continue
                 # Check last message date
                 last_msg = thread_messages[-1]
                 last_msg_date = int(last_msg['internalDate']) // 1000

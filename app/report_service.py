@@ -19,20 +19,32 @@ def generate_followup_report(threads_to_follow_up: List[Dict], report_path: str 
     if report_path is None:
         report_path = f"followup_report_{curr_date}.csv"
 
-    with open(report_path, mode='w', newline='', encoding='utf-8') as csvfile:
+    import os
+    file_exists = os.path.isfile(report_path)
+    with open(report_path, mode='a', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["Day", "Sent To", "Subject", "Prev Message sent on", "Follow up text", "Number of follow up"])
+        if not file_exists:
+            writer.writerow(["Day", "Sent To", "Subject", "Prev Message sent on", "Follow up text", "Number of follow up", "Status"])
         for day, threads in sorted(day_groups.items()):
             for thread in threads:
                 # Determine follow-up text and count
                 followup_count = thread.get('followup_count', 0)
                 template_idx = min(followup_count, len(FOLLOWUP_TEMPLATES)-1)
                 followup_text = FOLLOWUP_TEMPLATES[template_idx]
+                # Determine status: 'fail' for dry run, 'success' for sent, 'fail' for failed
+                status = thread.get('status', '')
+                if status == 'dry_run' or status == 'failed':
+                    status_str = 'fail'
+                elif status == 'sent':
+                    status_str = 'success'
+                else:
+                    status_str = status
                 writer.writerow([
                     day,
                     thread.get('to', ''),
                     thread.get('subject', ''),
                     thread.get('date', ''),
                     followup_text,
-                    followup_count
+                    (followup_count + 1),
+                    status_str
                 ])
