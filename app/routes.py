@@ -4,218 +4,296 @@ from app import app
 from app.gmail_service import get_gmail_service
 from app.email_service import get_threads_to_follow_up, send_followup_email
 from app.config import DISABLE_SEND_FOLLOWUP
+from itertools import groupby
 
-# HTML template for the main page
+# HTML template for the main page with grouped subjects
 TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Unreplied Emails</title>
+    <title>Follow-ups by Subject</title>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px; 
-            background-color: #f5f5f5;
-        }
-        .email { 
-            background-color: white;
-            border: 1px solid #ddd; 
-            margin: 15px 0; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; 
             padding: 20px; 
+            background-color: #f5f5f5;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            margin-bottom: 24px;
+            color: #202124;
+            font-size: 28px;
+        }
+        .group-section {
+            background-color: white;
+            border: 1px solid #dadce0;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            overflow: hidden;
+            box-shadow: 0 1px 2px rgba(60,64,67,.1);
         }
-        .subject { 
-            font-weight: bold; 
-            color: #1a73e8; 
-            font-size: 1.1em;
-            margin-bottom: 8px;
-        }
-        .meta { 
-            color: #666; 
-            font-size: 0.9em; 
-            margin: 8px 0;
-            line-height: 1.4;
-        }
-        .snippet { 
-            color: #444; 
-            margin: 15px 0;
-            line-height: 1.5;
-            padding: 10px;
-            background-color: #fafafa;
-            border-radius: 4px;
-        }
-        .analysis {
+        .group-header {
             background-color: #f8f9fa;
-            padding: 15px;
-            margin: 15px 0;
-            border-radius: 6px;
-            border: 1px solid #e8eaed;
-        }
-        .analysis-item {
-            margin: 10px 0;
-            line-height: 1.5;
-        }
-        .needs-followup {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 15px;
-            font-size: 0.9em;
-            font-weight: 500;
-            letter-spacing: 0.3px;
-        }
-        .needs-followup.true { 
-            background-color: #e8f5e9; 
-            color: #1b5e20;
-            border: 1px solid #81c784;
-        }
-        .needs-followup.false { 
-            background-color: #f5f5f5; 
-            color: #666;
-            border: 1px solid #ddd;
-        }
-        .reason {
-            font-style: italic;
-            color: #555;
-            padding: 10px;
-            background-color: white;
-            border-radius: 4px;
-            margin: 10px 0;
-        }
-        .followup-email {
-            background-color: white;
-            border: 1px solid #e0e0e0;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 6px;
-            white-space: pre-wrap;
-            line-height: 1.5;
-            color: #333;
-            font-family: 'Roboto Mono', monospace;
-            font-size: 0.95em;
-        }
-        .actions { 
-            margin-top: 15px;
+            padding: 16px;
+            border-bottom: 1px solid #dadce0;
             display: flex;
             align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            user-select: none;
         }
-        .follow-up-btn {
-            background-color: #1a73e8;
-            color: white;
-            padding: 8px 20px;
+        .group-header input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .group-header:hover {
+            background-color: #f0f0f0;
+        }
+        .subject-title {
+            flex: 1;
+            font-weight: 500;
+            color: #202124;
+            font-size: 16px;
+        }
+        .email-count {
+            color: #5f6368;
+            font-size: 14px;
+            background-color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+        }
+        .emails-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .email-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+        }
+        .email-item:last-child {
+            border-bottom: none;
+        }
+        .email-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-top: 4px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .email-details {
+            flex: 1;
+            min-width: 0;
+        }
+        .email-to {
+            color: #1a73e8;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .email-date {
+            color: #5f6368;
+            font-size: 12px;
+        }
+        .snippet-text {
+            color: #3c4043;
+            font-size: 12px;
+            margin-top: 4px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .group-actions {
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #dadce0;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .btn {
+            padding: 8px 16px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            display: inline-block;
             font-weight: 500;
-            transition: background-color 0.2s;
+            font-size: 14px;
+            transition: all 0.2s;
         }
-        .follow-up-btn:hover {
+        .btn-primary {
+            background-color: #1a73e8;
+            color: white;
+        }
+        .btn-primary:hover {
             background-color: #1557b0;
+            box-shadow: 0 1px 3px rgba(26, 115, 232, 0.3);
         }
-        .follow-up-btn:disabled {
+        .btn-primary:disabled {
             background-color: #e0e0e0;
             color: #999;
             cursor: not-allowed;
         }
-        .success { 
-            color: #2e7d32; 
-            display: none; 
-            margin-left: 15px;
-            font-weight: 500;
+        .btn-secondary {
+            background-color: #f1f3f4;
+            color: #3c4043;
         }
-        .error { 
-            color: #d32f2f; 
-            display: none; 
-            margin-left: 15px;
+        .btn-secondary:hover {
+            background-color: #e8eaed;
+        }
+        .status-message {
+            display: inline-block;
+            margin-left: 8px;
             font-weight: 500;
+            font-size: 13px;
+        }
+        .status-success {
+            color: #188038;
+        }
+        .status-error {
+            color: #d33b27;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #5f6368;
         }
     </style>
     <script>
-    function sendFollowUp(button, emailId, threadId, to, subject) {
+    function toggleGroupCheckboxes(groupIndex, mainCheckbox) {
+        const emailCheckboxes = document.querySelectorAll(`.group-${groupIndex} .email-checkbox`);
+        emailCheckboxes.forEach(cb => {
+            cb.checked = mainCheckbox.checked;
+        });
+    }
+
+    function sendSelectedFollowUps(groupIndex) {
+        const selectedEmails = Array.from(document.querySelectorAll(`.group-${groupIndex} .email-checkbox:checked`))
+            .map(cb => ({
+                email_id: cb.dataset.emailId,
+                thread_id: cb.dataset.threadId,
+                to: cb.dataset.to,
+                subject: cb.dataset.subject
+            }));
+
+        if (selectedEmails.length === 0) {
+            alert('Please select at least one email');
+            return;
+        }
+
+        const button = event.target;
         button.disabled = true;
-        const successSpan = button.nextElementSibling;
-        const errorSpan = successSpan.nextElementSibling;
-        
-        fetch('/send-followup', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                email_id: emailId,
-                thread_id: threadId,
-                to: to,
-                subject: subject
+        const originalText = button.textContent;
+        let completed = 0;
+        let failed = 0;
+
+        selectedEmails.forEach((email, index) => {
+            fetch('/send-followup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(email)
             })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                successSpan.style.display = 'inline';
-                button.style.display = 'none';
-            } else {
-                errorSpan.style.display = 'inline';
-                button.disabled = false;
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            errorSpan.style.display = 'inline';
-            button.disabled = false;
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    completed++;
+                    const checkbox = document.querySelector(`.email-checkbox[data-email-id="${email.email_id}"]`);
+                    checkbox.parentElement.parentElement.style.opacity = '0.6';
+                    checkbox.disabled = true;
+                } else {
+                    failed++;
+                }
+                if (completed + failed === selectedEmails.length) {
+                    const message = document.createElement('span');
+                    message.className = 'status-message ' + (failed === 0 ? 'status-success' : 'status-error');
+                    message.textContent = `✓ ${completed} sent${failed > 0 ? `, ${failed} failed` : ''}`;
+                    button.parentElement.appendChild(message);
+                    button.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                failed++;
+                if (completed + failed === selectedEmails.length) {
+                    const message = document.createElement('span');
+                    message.className = 'status-message status-error';
+                    message.textContent = `✗ Error: ${failed} failed`;
+                    button.parentElement.appendChild(message);
+                    button.disabled = false;
+                }
+            });
         });
     }
     </script>
 </head>
 <body>
-    <h1>Unreplied Sent Emails (Last 30 Days)</h1>
-    {% for email in emails %}
-    <div class="email">
-        <div class="subject">{{ email.subject }}</div>
-        <div class="meta">
-            To: {{ email.to }}<br>
-            Date: {{ email.date }}
-        </div>
-        <div class="snippet">{{ email.snippet }}</div>
-        
-        <div class="analysis">
-            <div class="analysis-item">
-                <span class="needs-followup {{ 'true' if email.needs_followup else 'false' }}">
-                    {{ "Needs Follow-up" if email.needs_followup else "No Follow-up Needed" }}
-                </span>
+    <h1>Follow-up Required Emails</h1>
+    {% if groups %}
+        {% set groupIndex = namespace(value=0) %}
+        {% for subject, group_emails in groups %}
+            <div class="group-section">
+                <div class="group-header" onclick="this.querySelector('input').click()">
+                    <input type="checkbox" class="group-checkbox" onchange="toggleGroupCheckboxes({{ groupIndex.value }}, this)" checked>
+                    <span class="subject-title">{{ subject }}</span>
+                    <span class="email-count">{{ group_emails|length }} email{{ 's' if group_emails|length != 1 else '' }}</span>
+                </div>
+                <div class="emails-list">
+                    {% for email in group_emails %}
+                    <div class="email-item group-{{ groupIndex.value }}">
+                        <input type="checkbox" class="email-checkbox" 
+                               data-email-id="{{ email.id }}"
+                               data-thread-id="{{ email.thread_id }}"
+                               data-to="{{ email.to }}"
+                               data-subject="{{ email.subject }}"
+                               checked>
+                        <div class="email-details">
+                            <div class="email-to">{{ email.to }}</div>
+                            <div class="email-date">{{ email.date }}</div>
+                            {% if email.days_since_last %}
+                            <div class="email-date">{{ email.days_since_last }} days since follow-up</div>
+                            {% endif %}
+                            {% if email.snippet %}
+                            <div class="snippet-text">{{ email.snippet }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="group-actions">
+                    <button class="btn btn-primary" onclick="sendSelectedFollowUps({{ groupIndex.value }})">
+                        Send Follow-ups
+                    </button>
+                </div>
             </div>
-            {% if email.reason %}
-            <div class="analysis-item reason">
-                {{ email.reason }}
-            </div>
-            {% endif %}
-            {% if email.needs_followup and email.followup_email %}
-            <div class="analysis-item">
-                <strong>Suggested Follow-up:</strong>
-                <div class="followup-email">{{ email.followup_email }}</div>
-            </div>
-            {% endif %}
+            {% set groupIndex.value = groupIndex.value + 1 %}
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <p>No emails require follow-up at this time.</p>
         </div>
-
-        <div class="actions">
-            <button class="follow-up-btn" onclick="sendFollowUp(this, '{{ email.id }}', '{{ email.thread_id }}', '{{ email.to }}', '{{ email.subject }}')">
-                Send Follow-up
-            </button>
-            <span class="success">✓ Sent!</span>
-            <span class="error">Failed to send</span>
-        </div>
-    </div>
-    {% endfor %}
+    {% endif %}
 </body>
 </html>
 """
 
+
 @app.route('/')
 def index():
-    """Render the main page with list of unreplied emails."""
+    """Render the main page with emails grouped by subject."""
     service = get_gmail_service()
-    unreplied_emails = get_threads_to_follow_up(service)
-    return render_template_string(TEMPLATE, emails=unreplied_emails)
+    emails = get_threads_to_follow_up(service)
+    
+    # Group emails by subject
+    emails_sorted = sorted(emails, key=lambda x: x['subject'])
+    groups = []
+    for subject, group in groupby(emails_sorted, key=lambda x: x['subject']):
+        groups.append((subject, list(group)))
+    
+    return render_template_string(TEMPLATE, groups=groups)
 
 @app.route('/send-followup', methods=['POST'])
 def send_followup():
