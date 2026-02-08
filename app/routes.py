@@ -1,4 +1,3 @@
-
 from flask import render_template_string, request, jsonify
 from app import app
 from app.gmail_service import get_gmail_service
@@ -171,6 +170,16 @@ TEMPLATE = """
         });
     }
 
+    // Toggle group checkbox reliably and propagate to child checkboxes.
+    function toggleGroupByClick(headerEl, groupIndex) {
+        const cb = headerEl.querySelector('input[type="checkbox"]');
+        if (!cb) return;
+        // Flip checkbox state
+        cb.checked = !cb.checked;
+        // Propagate change to children
+        toggleGroupCheckboxes(groupIndex, cb);
+    }
+
     function sendSelectedFollowUps(groupIndex) {
         const selectedEmails = Array.from(document.querySelectorAll(`.group-${groupIndex} .email-checkbox:checked`))
             .map(cb => ({
@@ -236,8 +245,9 @@ TEMPLATE = """
         {% set groupIndex = namespace(value=0) %}
         {% for subject, group_emails in groups %}
             <div class="group-section">
-                <div class="group-header" onclick="this.querySelector('input').click()">
-                    <input type="checkbox" class="group-checkbox" onchange="toggleGroupCheckboxes({{ groupIndex.value }}, this)" checked>
+                <div class="group-header" onclick="toggleGroupByClick(this, {{ groupIndex.value }})">
+                    <!-- stopPropagation so clicking the checkbox doesn't also trigger the header click -->
+                    <input type="checkbox" class="group-checkbox" onclick="event.stopPropagation();" onchange="toggleGroupCheckboxes({{ groupIndex.value }}, this)" checked>
                     <span class="subject-title">{{ subject }}</span>
                     <span class="email-count">{{ group_emails|length }} email{{ 's' if group_emails|length != 1 else '' }}</span>
                 </div>

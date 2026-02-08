@@ -98,26 +98,34 @@ def count_followups(messages: List[Dict]) -> int:
 
 def send_followup_email(service, to: str, subject: str, thread_id: str) -> bool:
     """Send a general follow-up email."""
-    sender_name = os.getenv('SENDER_NAME')
-    if not sender_name:
-        # Try to get from Gmail profile
-        profile = service.users().getProfile(userId='me').execute()
-        email = profile['emailAddress']
-        name_parts = email.split('@')[0].split('.')
-        sender_name = ' '.join([part.title() for part in name_parts])
     try:
         from datetime import datetime
-        # Get thread and last email date
+        import re
+        
+        # Get authenticated user's profile for actual email
+        profile = service.users().getProfile(userId='me').execute()
+        profile_email = profile['emailAddress']
+        sender_name = os.getenv('SENDER_NAME', 'Nishant Soni')
+        
+        # Get thread and extract message IDs for threading
         thread = service.users().threads().get(userId='me', id=thread_id).execute()
         last_email_date = None
+        thread_messages = thread.get('messages', [])
         receiver_name = None
+        original_message_id = None
+        
         if thread and 'messages' in thread and thread['messages']:
+            # Get first message (original) for In-Reply-To header
+            first_msg = thread['messages'][0]
+            first_msg_headers = first_msg.get('payload', {}).get('headers', [])
+            original_message_id = next((h['value'] for h in first_msg_headers if h['name'].lower() == 'message-id'), None)
+            
             # Get last message date
             last_msg = thread['messages'][-1]
             last_email_ts = int(last_msg.get('internalDate', '0')) // 1000
             last_email_date = datetime.utcfromtimestamp(last_email_ts).strftime('%Y-%m-%d %H:%M UTC')
+            
             # Extract receiver name from first message salutation
-            first_msg = thread['messages'][0]
             payload = first_msg.get('payload', {})
             parts = payload.get('parts', [])
             body_data = None
@@ -128,29 +136,44 @@ def send_followup_email(service, to: str, subject: str, thread_id: str) -> bool:
                         break
             else:
                 body_data = payload.get('body', {}).get('data')
-            import base64
-            import re
+            
             if body_data:
-                decoded_body = base64.urlsafe_b64decode(body_data).decode('utf-8', errors='ignore')
-                match = re.search(r'^(Hi|Hello)\s+(\w+)', decoded_body, re.MULTILINE)
-                if match:
-                    receiver_name = match.group(2)
+                # Ensure proper padding for base64 then decode
+                padded = body_data + '=' * (-len(body_data) % 4)
+                decoded_body = base64.urlsafe_b64decode(padded).decode('utf-8', errors='ignore')
+                # Match salutations like "Hi James," or "Hello James Smith" (case-insensitive, multiline).
+                m = re.search(
+                    r'^\s*(?:hi|hello)[\s,]+([A-Za-z][A-Za-z\'\-\s]*?)(?=[,\.\n\r]|$)',
+                    decoded_body,
+                    re.IGNORECASE | re.MULTILINE
+                )
+                if m:
+                    receiver_name = m.group(1).strip()
+        
         if not receiver_name:
             receiver_name = ''
+        
         # Select template based on follow-up count
-        followup_count = 0
-        if thread and 'messages' in thread:
-            followup_count = sum(
-                1 for m in thread['messages']
-                if m.get('snippet', '').lower().find('follow up') != -1
-            )
+        followup_count = count_followups(thread_messages)
+        print(f"Follow-up count for thread {thread_id}: {followup_count}")
         template_idx = followup_count % len(FOLLOWUP_TEMPLATES)
         template_body = FOLLOWUP_TEMPLATES[template_idx]
-        salutation = f"Hi {receiver_name}," if receiver_name else "Hi," 
-        message_text = f"{salutation}\n\n{template_body}\n\nThanks,\n{sender_name}"
+        salutation = f"Hi {receiver_name}," if receiver_name else "Hi,"
+        
+        #signature = f"{sender_name}\n{sender_email}{spacing}{separator}{spacing}{sender_phone}"
+        signature = f"{sender_name}"
+        message_text = f"{salutation}\n\n{template_body}\n\nThanks,\n{signature}"
+        
         message = MIMEText(message_text)
         message['to'] = to
+        message['from'] = f"{sender_name} <{profile_email}>"
         message['subject'] = f"Re: {subject}"
+        
+        # Add threading headers to keep emails in same thread
+        if original_message_id:
+            message['In-Reply-To'] = original_message_id
+            message['References'] = original_message_id
+        
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
         service.users().messages().send(
             userId='me',

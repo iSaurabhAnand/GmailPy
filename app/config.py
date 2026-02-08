@@ -2,9 +2,9 @@ import os
 
 # Configurable follow-up templates (2 lines each)
 FOLLOWUP_TEMPLATES = [
-    os.getenv('FOLLOWUP_TEMPLATE_1', "Just checking in to see if you had a chance to review my previous email.\nLet me know if you need anything from me."),
-    os.getenv('FOLLOWUP_TEMPLATE_2', "Wanted to follow up on my last message.\nPlease let me know if you have any questions."),
-    os.getenv('FOLLOWUP_TEMPLATE_3', "Hope you're well!\nJust following up regarding my earlier email.")
+    os.getenv('FOLLOWUP_TEMPLATE_1', "I hope you are doing well.\nI just wanted to check in and gently follow up with you on my previous message. Looking forward to hearing back from you.\n\nThank you for your time and consideration."),
+    os.getenv('FOLLOWUP_TEMPLATE_2', "I just wanted to follow up on my last message.\n\nPlease let me know if you have any questions."),
+    os.getenv('FOLLOWUP_TEMPLATE_3', "Hope you're well!\n\nJust following up regarding my earlier email.")
 ]
 
 # Configurable constants
