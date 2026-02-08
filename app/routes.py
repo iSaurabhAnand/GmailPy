@@ -1,11 +1,12 @@
-from flask import render_template_string, request, jsonify
+from flask import render_template_string, request, jsonify, Response
 from app import app
 from app.gmail_service import get_gmail_service
-from app.email_service import get_threads_to_follow_up, send_followup_email
+from app.email_service import get_threads_to_follow_up, get_threads_to_follow_up_generator, send_followup_email
 from app.config import DISABLE_SEND_FOLLOWUP
 from itertools import groupby
+import json
 
-# HTML template for the main page with grouped subjects
+# HTML template for the main page with progressive loading
 TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -25,6 +26,31 @@ TEMPLATE = """
             color: #202124;
             font-size: 28px;
         }
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #5f6368;
+            font-size: 14px;
+        }
+        .loading-indicator.active {
+            display: block;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1a73e8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
         .group-section {
             background-color: white;
             border: 1px solid #dadce0;
@@ -32,6 +58,17 @@ TEMPLATE = """
             margin-bottom: 20px;
             overflow: hidden;
             box-shadow: 0 1px 2px rgba(60,64,67,.1);
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         .group-header {
             background-color: #f8f9fa;
@@ -74,6 +111,11 @@ TEMPLATE = """
             display: flex;
             gap: 12px;
             align-items: flex-start;
+            animation: fadeIn 0.2s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
         .email-item:last-child {
             border-bottom: none;
@@ -163,6 +205,15 @@ TEMPLATE = """
         }
     </style>
     <script>
+    const groupsMap = new Map(); // Track groups by subject
+    
+    // Decode HTML entities
+    function decodeHTMLEntities(text) {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = text;
+        return textarea.value;
+    }
+    
     function toggleGroupCheckboxes(groupIndex, mainCheckbox) {
         const emailCheckboxes = document.querySelectorAll(`.group-${groupIndex} .email-checkbox`);
         emailCheckboxes.forEach(cb => {
@@ -170,14 +221,128 @@ TEMPLATE = """
         });
     }
 
-    // Toggle group checkbox reliably and propagate to child checkboxes.
     function toggleGroupByClick(headerEl, groupIndex) {
         const cb = headerEl.querySelector('input[type="checkbox"]');
         if (!cb) return;
-        // Flip checkbox state
         cb.checked = !cb.checked;
-        // Propagate change to children
         toggleGroupCheckboxes(groupIndex, cb);
+    }
+
+    function updateEmailCount(subject) {
+        const group = groupsMap.get(subject);
+        if (group) {
+            const count = group.emails.length;
+            const countEl = group.section.querySelector('.email-count');
+            if (countEl) {
+                countEl.textContent = `${count} email${count !== 1 ? 's' : ''}`;
+            }
+        }
+    }
+
+    function addThreadToUI(thread, groupIndex) {
+        const subject = thread.subject;
+        
+        // Create or get group
+        if (!groupsMap.has(subject)) {
+            const groupSection = document.createElement('div');
+            groupSection.className = 'group-section';
+            
+            const header = document.createElement('div');
+            header.className = 'group-header';
+            header.onclick = () => toggleGroupByClick(header, groupIndex);
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'group-checkbox';
+            checkbox.checked = true;
+            checkbox.onclick = (e) => e.stopPropagation();
+            checkbox.onchange = (e) => toggleGroupCheckboxes(groupIndex, e.target);
+            
+            const title = document.createElement('span');
+            title.className = 'subject-title';
+            title.textContent = decodeHTMLEntities(subject);
+            
+            const count = document.createElement('span');
+            count.className = 'email-count';
+            count.textContent = '0 emails';
+            
+            header.appendChild(checkbox);
+            header.appendChild(title);
+            header.appendChild(count);
+            
+            const emailsList = document.createElement('div');
+            emailsList.className = 'emails-list';
+            
+            const actions = document.createElement('div');
+            actions.className = 'group-actions';
+            
+            const sendBtn = document.createElement('button');
+            sendBtn.className = 'btn btn-primary';
+            sendBtn.textContent = 'Send Follow-ups';
+            sendBtn.onclick = () => sendSelectedFollowUps(groupIndex);
+            
+            actions.appendChild(sendBtn);
+            
+            groupSection.appendChild(header);
+            groupSection.appendChild(emailsList);
+            groupSection.appendChild(actions);
+            
+            document.getElementById('groups-container').appendChild(groupSection);
+            
+            groupsMap.set(subject, {
+                section: groupSection,
+                emails: [],
+                emailsList: emailsList,
+                groupIndex: groupIndex
+            });
+        }
+        
+        const group = groupsMap.get(subject);
+        
+        // Add email to list
+        const emailItem = document.createElement('div');
+        emailItem.className = `email-item group-${groupIndex}`;
+        
+        const cbEmail = document.createElement('input');
+        cbEmail.type = 'checkbox';
+        cbEmail.className = 'email-checkbox';
+        cbEmail.dataset.emailId = thread.id;
+        cbEmail.dataset.threadId = thread.thread_id;
+        cbEmail.dataset.to = thread.to;
+        cbEmail.dataset.subject = thread.subject;
+        cbEmail.checked = true;
+        
+        const details = document.createElement('div');
+        details.className = 'email-details';
+        
+        const toDiv = document.createElement('div');
+        toDiv.className = 'email-to';
+        toDiv.textContent = decodeHTMLEntities(thread.to);
+        
+        const dateDiv = document.createElement('div');
+        dateDiv.className = 'email-date';
+        dateDiv.textContent = decodeHTMLEntities(thread.date);
+        
+        const daysDiv = document.createElement('div');
+        daysDiv.className = 'email-date';
+        daysDiv.textContent = `${thread.days_since_last} days since follow-up`;
+        
+        details.appendChild(toDiv);
+        details.appendChild(dateDiv);
+        details.appendChild(daysDiv);
+        
+        if (thread.snippet) {
+            const snippetDiv = document.createElement('div');
+            snippetDiv.className = 'snippet-text';
+            snippetDiv.textContent = decodeHTMLEntities(thread.snippet);
+            details.appendChild(snippetDiv);
+        }
+        
+        emailItem.appendChild(cbEmail);
+        emailItem.appendChild(details);
+        group.emailsList.appendChild(emailItem);
+        group.emails.push(thread);
+        updateEmailCount(subject);
     }
 
     function sendSelectedFollowUps(groupIndex) {
@@ -201,109 +366,134 @@ TEMPLATE = """
         let failed = 0;
 
         selectedEmails.forEach((email, index) => {
-            fetch('/send-followup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(email)
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    completed++;
-                    const checkbox = document.querySelector(`.email-checkbox[data-email-id="${email.email_id}"]`);
-                    checkbox.parentElement.parentElement.style.opacity = '0.6';
-                    checkbox.disabled = true;
-                } else {
-                    failed++;
-                }
-                if (completed + failed === selectedEmails.length) {
-                    const message = document.createElement('span');
-                    message.className = 'status-message ' + (failed === 0 ? 'status-success' : 'status-error');
-                    message.textContent = `✓ ${completed} sent${failed > 0 ? `, ${failed} failed` : ''}`;
-                    button.parentElement.appendChild(message);
-                    button.style.display = 'none';
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                failed++;
-                if (completed + failed === selectedEmails.length) {
-                    const message = document.createElement('span');
-                    message.className = 'status-message status-error';
-                    message.textContent = `✗ Error: ${failed} failed`;
-                    button.parentElement.appendChild(message);
-                    button.disabled = false;
-                }
-            });
+            setTimeout(() => {
+                fetch('/send-followup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(email)
+                })
+                .then(r => r.json())
+                .then(result => {
+                    if (result.success) {
+                        completed++;
+                        const checkbox = document.querySelector(
+                            `.email-checkbox[data-email-id="${email.email_id}"]`
+                        );
+                        if (checkbox) {
+                            checkbox.parentElement.style.opacity = '0.5';
+                            checkbox.disabled = true;
+                        }
+                    } else {
+                        failed++;
+                    }
+                    const progress = completed + failed;
+                    button.textContent = `${progress}/${selectedEmails.length}`;
+                    
+                    if (progress === selectedEmails.length) {
+                        button.disabled = false;
+                        button.textContent = originalText;
+                        if (failed === 0) {
+                            button.innerHTML += '<span class="status-message status-success"> ✓ Done</span>';
+                        } else {
+                            button.innerHTML += `<span class="status-message status-error"> ${failed} failed</span>`;
+                        }
+                    }
+                });
+            }, index * 500);
         });
     }
+
+    // Connect to SSE stream
+    function connectToStream() {
+        const eventSource = new EventSource('/api/threads-stream');
+        let groupIndex = 0;
+        
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'complete') {
+                eventSource.close();
+                const loadingEl = document.querySelector('.loading-indicator');
+                if (loadingEl) {
+                    loadingEl.classList.remove('active');
+                }
+                const container = document.getElementById('groups-container');
+                if (container.children.length === 0) {
+                    const emptyState = document.createElement('div');
+                    emptyState.className = 'empty-state';
+                    emptyState.textContent = 'No emails require follow-up at this time.';
+                    container.appendChild(emptyState);
+                }
+            } else if (data.type === 'thread') {
+                addThreadToUI(data.thread, groupIndex);
+                if (data.current_subject !== data.thread.subject) {
+                    groupIndex++;
+                }
+            }
+        };
+        
+        eventSource.onerror = (error) => {
+            console.error('Stream error:', error);
+            eventSource.close();
+            const loadingEl = document.querySelector('.loading-indicator');
+            if (loadingEl) {
+                loadingEl.classList.remove('active');
+                loadingEl.innerHTML = '<p style="color: #d33b27;">Error loading emails. Please refresh the page.</p>';
+            }
+        };
+    }
+
+    // Start streaming when page loads
+    window.addEventListener('load', connectToStream);
     </script>
 </head>
 <body>
     <h1>Follow-up Required Emails</h1>
-    {% if groups %}
-        {% set groupIndex = namespace(value=0) %}
-        {% for subject, group_emails in groups %}
-            <div class="group-section">
-                <div class="group-header" onclick="toggleGroupByClick(this, {{ groupIndex.value }})">
-                    <!-- stopPropagation so clicking the checkbox doesn't also trigger the header click -->
-                    <input type="checkbox" class="group-checkbox" onclick="event.stopPropagation();" onchange="toggleGroupCheckboxes({{ groupIndex.value }}, this)" checked>
-                    <span class="subject-title">{{ subject }}</span>
-                    <span class="email-count">{{ group_emails|length }} email{{ 's' if group_emails|length != 1 else '' }}</span>
-                </div>
-                <div class="emails-list">
-                    {% for email in group_emails %}
-                    <div class="email-item group-{{ groupIndex.value }}">
-                        <input type="checkbox" class="email-checkbox" 
-                               data-email-id="{{ email.id }}"
-                               data-thread-id="{{ email.thread_id }}"
-                               data-to="{{ email.to }}"
-                               data-subject="{{ email.subject }}"
-                               checked>
-                        <div class="email-details">
-                            <div class="email-to">{{ email.to }}</div>
-                            <div class="email-date">{{ email.date }}</div>
-                            {% if email.days_since_last %}
-                            <div class="email-date">{{ email.days_since_last }} days since follow-up</div>
-                            {% endif %}
-                            {% if email.snippet %}
-                            <div class="snippet-text">{{ email.snippet }}</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                <div class="group-actions">
-                    <button class="btn btn-primary" onclick="sendSelectedFollowUps({{ groupIndex.value }})">
-                        Send Follow-ups
-                    </button>
-                </div>
-            </div>
-            {% set groupIndex.value = groupIndex.value + 1 %}
-        {% endfor %}
-    {% else %}
-        <div class="empty-state">
-            <p>No emails require follow-up at this time.</p>
-        </div>
-    {% endif %}
+    <div class="loading-indicator active">
+        <span class="spinner"></span>Loading emails...
+    </div>
+    <div id="groups-container"></div>
 </body>
 </html>
 """
 
 
+@app.route('/api/threads-stream')
+def threads_stream():
+    """Stream threads as SSE for progressive UI rendering."""
+    def generate():
+        service = get_gmail_service()
+        current_subject = None
+        group_index = 0
+        
+        for thread in get_threads_to_follow_up_generator(service):
+            data = {
+                'type': 'thread',
+                'thread': thread,
+                'group_index': group_index,
+                'current_subject': thread['subject']
+            }
+            # Track subject changes for grouping
+            if current_subject != thread['subject']:
+                current_subject = thread['subject']
+                group_index += 1
+            
+            yield f"data: {json.dumps(data)}\n\n"
+        
+        # Signal completion
+        yield "data: {\"type\": \"complete\"}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no'
+    })
+
+
 @app.route('/')
 def index():
-    """Render the main page with emails grouped by subject."""
-    service = get_gmail_service()
-    emails = get_threads_to_follow_up(service)
-    
-    # Group emails by subject
-    emails_sorted = sorted(emails, key=lambda x: x['subject'])
-    groups = []
-    for subject, group in groupby(emails_sorted, key=lambda x: x['subject']):
-        groups.append((subject, list(group)))
-    
-    return render_template_string(TEMPLATE, groups=groups)
+    """Render the main page with progressive loading."""
+    return render_template_string(TEMPLATE)
+
 
 @app.route('/send-followup', methods=['POST'])
 def send_followup():

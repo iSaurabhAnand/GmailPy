@@ -10,9 +10,9 @@ from app.config import MIN_DAYS, MAX_DAYS, BATCH_SIZE, MAX_FOLLOW_UPS
 
 
 
-def get_threads_to_follow_up(service) -> List[Dict]:
+def get_threads_to_follow_up_generator(service):
     """
-    Get threads from last MIN_DAYS to MAX_DAYS, batch-wise, that need follow-up.
+    Generator that yields threads batch-wise for streaming.
     """
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
@@ -53,7 +53,7 @@ def get_threads_to_follow_up(service) -> List[Dict]:
                     # Check follow-up count
                     followup_count = count_followups(thread_messages)
                     if followup_count < MAX_FOLLOW_UPS:
-                        threads_to_follow_up.append({
+                        thread_data = {
                             'id': last_msg['id'],
                             'thread_id': thread_id,
                             'subject': get_header(last_msg, 'subject'),
@@ -62,14 +62,23 @@ def get_threads_to_follow_up(service) -> List[Dict]:
                             'snippet': last_msg.get('snippet', ''),
                             'followup_count': followup_count,
                             'days_since_last': days_since_last
-                        })
+                        }
+                        threads_to_follow_up.append(thread_data)
+                        yield thread_data
         page_token = results.get('nextPageToken')
         if not page_token:
             break
+    
     # Generate CSV report after batch processing
-    from app.report_service import generate_followup_report
     generate_followup_report(threads_to_follow_up)
-    return threads_to_follow_up
+
+
+def get_threads_to_follow_up(service) -> List[Dict]:
+    """
+    Get threads from last MIN_DAYS to MAX_DAYS, batch-wise, that need follow-up.
+    (Deprecated: use get_threads_to_follow_up_generator for streaming results)
+    """
+    return list(get_threads_to_follow_up_generator(service))
 
 def is_from_user(message, user_email: str) -> bool:
     try:
