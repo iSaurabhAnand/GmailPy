@@ -2,7 +2,6 @@ from flask import render_template_string, request, jsonify, Response
 from app import app
 from app.gmail_service import get_gmail_service
 from app.email_service import get_threads_to_follow_up, get_threads_to_follow_up_generator, send_followup_email
-from app.config import DISABLE_SEND_FOLLOWUP
 from itertools import groupby
 import json
 
@@ -239,24 +238,26 @@ TEMPLATE = """
         }
     }
 
-    function addThreadToUI(thread, groupIndex) {
+    function addThreadToUI(thread) {
         const subject = thread.subject;
+        let assignedIndex;
         
         // Create or get group
         if (!groupsMap.has(subject)) {
+            assignedIndex = groupsMap.size; // assign next sequential index
             const groupSection = document.createElement('div');
             groupSection.className = 'group-section';
             
             const header = document.createElement('div');
             header.className = 'group-header';
-            header.onclick = () => toggleGroupByClick(header, groupIndex);
+            header.onclick = () => toggleGroupByClick(header, assignedIndex);
             
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'group-checkbox';
             checkbox.checked = true;
             checkbox.onclick = (e) => e.stopPropagation();
-            checkbox.onchange = (e) => toggleGroupCheckboxes(groupIndex, e.target);
+            checkbox.onchange = (e) => toggleGroupCheckboxes(assignedIndex, e.target);
             
             const title = document.createElement('span');
             title.className = 'subject-title';
@@ -279,7 +280,7 @@ TEMPLATE = """
             const sendBtn = document.createElement('button');
             sendBtn.className = 'btn btn-primary';
             sendBtn.textContent = 'Send Follow-ups';
-            sendBtn.onclick = () => sendSelectedFollowUps(groupIndex);
+            sendBtn.onclick = () => sendSelectedFollowUps(assignedIndex, sendBtn);
             
             actions.appendChild(sendBtn);
             
@@ -293,15 +294,16 @@ TEMPLATE = """
                 section: groupSection,
                 emails: [],
                 emailsList: emailsList,
-                groupIndex: groupIndex
+                groupIndex: assignedIndex
             });
         }
         
         const group = groupsMap.get(subject);
+        assignedIndex = group.groupIndex;
         
         // Add email to list
         const emailItem = document.createElement('div');
-        emailItem.className = `email-item group-${groupIndex}`;
+        emailItem.className = `email-item group-${assignedIndex}`;
         
         const cbEmail = document.createElement('input');
         cbEmail.type = 'checkbox';
@@ -345,7 +347,7 @@ TEMPLATE = """
         updateEmailCount(subject);
     }
 
-    function sendSelectedFollowUps(groupIndex) {
+    function sendSelectedFollowUps(groupIndex, button) {
         const selectedEmails = Array.from(document.querySelectorAll(`.group-${groupIndex} .email-checkbox:checked`))
             .map(cb => ({
                 email_id: cb.dataset.emailId,
@@ -359,7 +361,7 @@ TEMPLATE = """
             return;
         }
 
-        const button = event.target;
+        if (!button) button = document.activeElement; // fallback
         button.disabled = true;
         const originalText = button.textContent;
         let completed = 0;
@@ -392,11 +394,25 @@ TEMPLATE = """
                     if (progress === selectedEmails.length) {
                         button.disabled = false;
                         button.textContent = originalText;
-                        if (failed === 0) {
-                            button.innerHTML += '<span class="status-message status-success"> ✓ Done</span>';
-                        } else {
-                            button.innerHTML += `<span class="status-message status-error"> ${failed} failed</span>`;
-                        }
+                        const msg = document.createElement('span');
+                        msg.className = 'status-message ' + (failed === 0 ? 'status-success' : 'status-error');
+                        msg.textContent = failed === 0 ? ' ✓ Done' : ` ${failed} failed`;
+                        // append message next to the button, not inside it
+                        button.parentElement.appendChild(msg);
+                        // hide the button when complete
+                        button.style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    console.error('Send error', err);
+                    failed++;
+                    const progress = completed + failed;
+                    if (progress === selectedEmails.length) {
+                        button.disabled = false;
+                        const msg = document.createElement('span');
+                        msg.className = 'status-message status-error';
+                        msg.textContent = ` ✗ Error: ${failed} failed`;
+                        button.parentElement.appendChild(msg);
                     }
                 });
             }, index * 500);
@@ -425,10 +441,7 @@ TEMPLATE = """
                     container.appendChild(emptyState);
                 }
             } else if (data.type === 'thread') {
-                addThreadToUI(data.thread, groupIndex);
-                if (data.current_subject !== data.thread.subject) {
-                    groupIndex++;
-                }
+                addThreadToUI(data.thread);
             }
         };
         
@@ -500,8 +513,6 @@ def send_followup():
     """Handle follow-up email requests."""
     data = request.json
     # Use a flag from config to disable sending follow-up emails
-    if DISABLE_SEND_FOLLOWUP:
-        return jsonify({'success': False, 'error': 'Sending follow-up emails is disabled by flag.'})
     service = get_gmail_service()
     success = send_followup_email(
         service,

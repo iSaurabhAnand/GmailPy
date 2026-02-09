@@ -6,7 +6,7 @@ import os
 import base64
 from email.mime.text import MIMEText
 from typing import List, Dict
-from app.config import MIN_DAYS, MAX_DAYS, BATCH_SIZE, MAX_FOLLOW_UPS
+from app.config import MIN_DAYS, MAX_DAYS, BATCH_SIZE, MAX_FOLLOW_UPS, DISABLE_SEND_FOLLOWUP
 
 
 
@@ -184,11 +184,16 @@ def send_followup_email(service, to: str, subject: str, thread_id: str) -> bool:
             message['References'] = original_message_id
         
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
-        service.users().messages().send(
-            userId='me',
-            body={'raw': raw, 'threadId': thread_id}
-        ).execute()
-        return True
+        
+        if DISABLE_SEND_FOLLOWUP:
+            print(f"Dry run: Would send follow-up to {to} | Subject: Re: {subject} | message: {message_text}")
+            return True
+        else:
+            service.users().messages().send(
+                userId='me',
+                body={'raw': raw, 'threadId': thread_id}
+            ).execute()
+            return True
     except Exception as e:
         print(f"Error sending follow-up: {e}")
         return False
