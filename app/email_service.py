@@ -90,6 +90,18 @@ def is_from_user(message, user_email: str) -> bool:
     except (KeyError, AttributeError):
         return False
 
+def get_plain_text_body(payload) -> str | None:
+    """Recursively extract base64-encoded plain text body from a MIME payload."""
+    if payload.get('mimeType') == 'text/plain':
+        data = payload.get('body', {}).get('data')
+        if data:
+            return data
+    for part in payload.get('parts', []):
+        result = get_plain_text_body(part)
+        if result:
+            return result
+    return None
+
 def get_header(message, name: str) -> str:
     try:
         headers = message.get('payload', {}).get('headers', [])
@@ -137,17 +149,8 @@ def send_followup_email(service, to: str, subject: str, thread_id: str) -> bool:
             last_email_date = datetime.utcfromtimestamp(last_email_ts).strftime('%Y-%m-%d %H:%M UTC')
             
             # Extract receiver name from first message salutation
-            payload = first_msg.get('payload', {})
-            parts = payload.get('parts', [])
-            body_data = None
-            if parts:
-                for part in parts:
-                    if part.get('mimeType') == 'text/plain' and 'data' in part.get('body', {}):
-                        body_data = part['body']['data']
-                        break
-            else:
-                body_data = payload.get('body', {}).get('data')
-            
+            body_data = get_plain_text_body(first_msg.get('payload', {}))
+
             if body_data:
                 # Ensure proper padding for base64 then decode
                 padded = body_data + '=' * (-len(body_data) % 4)
