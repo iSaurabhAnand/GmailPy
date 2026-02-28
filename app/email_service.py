@@ -22,6 +22,7 @@ def get_threads_to_follow_up_generator(service):
     query = f"label:SENT after:{after_ts} before:{before_ts} subject:'Interest in'"
 
     threads_to_follow_up = []
+    seen_thread_ids = set()
     page_token = None
     while True:
         results = service.users().messages().list(
@@ -34,7 +35,8 @@ def get_threads_to_follow_up_generator(service):
         if not messages:
             break
 
-        thread_ids = set(msg['threadId'] for msg in messages)
+        thread_ids = set(msg['threadId'] for msg in messages) - seen_thread_ids
+        seen_thread_ids.update(thread_ids)
         for thread_id in thread_ids:
             thread = service.users().threads().get(userId='me', id=thread_id).execute()
             thread_messages = thread.get('messages', [])
