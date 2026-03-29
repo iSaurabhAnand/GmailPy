@@ -1,4 +1,5 @@
 from app.report_service import generate_followup_report
+from app.blacklist_service import is_subject_blacklisted, load_blacklisted_subjects
 from app.config import FOLLOWUP_TEMPLATES
 
 import datetime
@@ -21,6 +22,7 @@ def get_threads_to_follow_up_generator(service):
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
     now = datetime.datetime.utcnow()
+    blacklisted_subjects = load_blacklisted_subjects()
     after_ts = int((now - datetime.timedelta(days=MAX_DAYS)).timestamp())
     before_ts = int((now - datetime.timedelta(days=MIN_DAYS)).timestamp())
     query = f"label:SENT after:{after_ts} before:{before_ts} subject:'Interest in'"
@@ -53,6 +55,9 @@ def get_threads_to_follow_up_generator(service):
                         continue
                 # Check last message date
                 last_msg = thread_messages[-1]
+                subject = get_header(last_msg, 'subject')
+                if is_subject_blacklisted(subject, blacklisted_subjects):
+                    continue
                 last_msg_date = int(last_msg['internalDate']) // 1000
                 days_since_last = (now - datetime.datetime.utcfromtimestamp(last_msg_date)).days
                 if is_within_followup_window(days_since_last):
@@ -62,7 +67,7 @@ def get_threads_to_follow_up_generator(service):
                         thread_data = {
                             'id': last_msg['id'],
                             'thread_id': thread_id,
-                            'subject': get_header(last_msg, 'subject'),
+                            'subject': subject,
                             'to': get_header(last_msg, 'to'),
                             'date': datetime.datetime.utcfromtimestamp(last_msg_date).strftime('%Y-%m-%d %H:%M:%S'),
                             'snippet': last_msg.get('snippet', ''),

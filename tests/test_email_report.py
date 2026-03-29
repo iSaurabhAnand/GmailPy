@@ -1,8 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
 from app import email_service
+from app import blacklist_service
 import os
 import datetime
+import tempfile
 
 class TestEmailService(unittest.TestCase):
     def setUp(self):
@@ -139,6 +141,48 @@ class TestEmailService(unittest.TestCase):
             self.assertEqual(len(threads), 1)
             self.assertEqual(threads[0]['thread_id'], 'within-window')
             mock_report.assert_called_once()
+
+    @patch('app.report_service.generate_followup_report')
+    def test_excludes_blacklisted_subjects(self, mock_report):
+        with patch('app.email_service.datetime') as mock_datetime, \
+             patch('app.email_service.load_blacklisted_subjects', return_value={'interest in product'}):
+            mock_datetime.datetime.utcnow.return_value = self.current_time
+            mock_datetime.datetime.utcfromtimestamp = datetime.datetime.utcfromtimestamp
+            mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
+            mock_datetime.timedelta = datetime.timedelta
+            self.mock_service.users().getProfile().execute.return_value = {'emailAddress': self.test_email}
+            self.mock_service.users().messages().list().execute.return_value = {
+                'messages': [{'threadId': 'blacklisted-thread'}]
+            }
+
+            thread = self.create_mock_thread('blacklisted', 1, self.current_time - datetime.timedelta(days=4))
+            for msg in thread['messages']:
+                msg['payload']['headers'].append({'name': 'From', 'value': self.test_email})
+            thread['messages'][0]['payload']['headers'][0]['value'] = 'Interest in Product'
+
+            def mock_get_thread(userId, id):
+                mock = MagicMock()
+                mock.execute.return_value = thread
+                return mock
+
+            self.mock_service.users().threads().get.side_effect = mock_get_thread
+
+            threads = email_service.get_threads_to_follow_up(self.mock_service)
+
+            self.assertEqual(threads, [])
+            mock_report.assert_called_once_with([])
+
+    def test_blacklist_service_persists_subjects(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            blacklist_path = os.path.join(temp_dir, 'subjects.txt')
+            with patch('app.blacklist_service.BLACKLIST_FILE', blacklist_path):
+                created = blacklist_service.add_subject_to_blacklist('Interest in Backend Role')
+                duplicate = blacklist_service.add_subject_to_blacklist('interest in backend role')
+                blacklisted_subjects = blacklist_service.load_blacklisted_subjects()
+
+            self.assertTrue(created)
+            self.assertFalse(duplicate)
+            self.assertIn('interest in backend role', blacklisted_subjects)
 
     def test_count_followups_with_varying_subjects(self):
         msgs = [

@@ -9,9 +9,10 @@ FOLLOWUP_TEMPLATES = [
 
 # Configurable constants
 MIN_DAYS = int(os.getenv('MIN_DAYS', 2))
-MAX_DAYS = int(os.getenv('MAX_DAYS', 30))
+MAX_DAYS = int(os.getenv('MAX_DAYS', 6))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', 20))
 MAX_FOLLOW_UPS = int(os.getenv('MAX_FOLLOW_UPS', 3))
+BLACKLIST_FILE = os.getenv('BLACKLIST_FILE', 'subject_blacklist.txt')
 
 # Flag to disable sending follow-up emails
 DISABLE_SEND_FOLLOWUP = bool(int(os.getenv('DISABLE_SEND_FOLLOWUP', '0')))

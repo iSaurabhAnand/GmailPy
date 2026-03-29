@@ -2,6 +2,7 @@ from flask import render_template_string, request, jsonify, Response
 from app import app
 from app.gmail_service import get_gmail_service
 from app.email_service import get_threads_to_follow_up, get_threads_to_follow_up_generator, send_followup_email
+from app.blacklist_service import add_subject_to_blacklist
 from itertools import groupby
 import json
 
@@ -185,6 +186,13 @@ TEMPLATE = """
         .btn-secondary:hover {
             background-color: #e8eaed;
         }
+        .btn-danger {
+            background-color: #d93025;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #b3261e;
+        }
         .status-message {
             display: inline-block;
             margin-left: 8px;
@@ -276,12 +284,18 @@ TEMPLATE = """
             
             const actions = document.createElement('div');
             actions.className = 'group-actions';
-            
+
+            const blacklistBtn = document.createElement('button');
+            blacklistBtn.className = 'btn btn-danger';
+            blacklistBtn.textContent = 'Blacklist Subject';
+            blacklistBtn.onclick = () => blacklistSubject(subject, blacklistBtn);
+
             const sendBtn = document.createElement('button');
             sendBtn.className = 'btn btn-primary';
             sendBtn.textContent = 'Send Follow-ups';
             sendBtn.onclick = () => sendSelectedFollowUps(assignedIndex, sendBtn);
             
+            actions.appendChild(blacklistBtn);
             actions.appendChild(sendBtn);
             
             groupSection.appendChild(header);
@@ -345,6 +359,57 @@ TEMPLATE = """
         group.emailsList.appendChild(emailItem);
         group.emails.push(thread);
         updateEmailCount(subject);
+    }
+
+    function showEmptyStateIfNeeded() {
+        const container = document.getElementById('groups-container');
+        if (!container) return;
+
+        const hasGroups = container.querySelector('.group-section');
+        const existingEmptyState = container.querySelector('.empty-state');
+
+        if (!hasGroups && !existingEmptyState) {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'empty-state';
+            emptyState.textContent = 'No emails require follow-up at this time.';
+            container.appendChild(emptyState);
+        } else if (hasGroups && existingEmptyState) {
+            existingEmptyState.remove();
+        }
+    }
+
+    function blacklistSubject(subject, button) {
+        const confirmed = window.confirm(`Blacklist "${subject}" and hide this group from future loads?`);
+        if (!confirmed) return;
+
+        button.disabled = true;
+        const originalText = button.textContent;
+        button.textContent = 'Saving...';
+
+        fetch('/blacklist-subject', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ subject })
+        })
+        .then(r => r.json())
+        .then(result => {
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to save subject to blacklist.');
+            }
+
+            const group = groupsMap.get(subject);
+            if (group) {
+                group.section.remove();
+                groupsMap.delete(subject);
+            }
+            showEmptyStateIfNeeded();
+        })
+        .catch(err => {
+            console.error('Blacklist error', err);
+            button.disabled = false;
+            button.textContent = originalText;
+            alert(err.message || 'Unable to blacklist this subject.');
+        });
     }
 
     function sendSelectedFollowUps(groupIndex, button) {
@@ -435,13 +500,11 @@ TEMPLATE = """
                 }
                 const container = document.getElementById('groups-container');
                 if (container.children.length === 0) {
-                    const emptyState = document.createElement('div');
-                    emptyState.className = 'empty-state';
-                    emptyState.textContent = 'No emails require follow-up at this time.';
-                    container.appendChild(emptyState);
+                    showEmptyStateIfNeeded();
                 }
             } else if (data.type === 'thread') {
                 addThreadToUI(data.thread);
+                showEmptyStateIfNeeded();
             }
         };
         
@@ -521,3 +584,19 @@ def send_followup():
         data['thread_id']
     )
     return jsonify({'success': success})
+
+
+@app.route('/blacklist-subject', methods=['POST'])
+def blacklist_subject():
+    """Persist a subject to the local blacklist file."""
+    data = request.json or {}
+    subject = (data.get('subject') or '').strip()
+
+    if not subject:
+        return jsonify({'success': False, 'error': 'Subject is required.'}), 400
+
+    try:
+        created = add_subject_to_blacklist(subject)
+        return jsonify({'success': True, 'created': created})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400

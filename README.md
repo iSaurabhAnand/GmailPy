@@ -6,6 +6,7 @@ A Python project to connect to Gmail and automatically send follow-up emails to 
 - **Gmail Authentication**: Securely authenticate with Gmail using OAuth2
 - **Automated Follow-ups**: Automatically identify threads that need follow-up based on time elapsed
 - **Web UI**: Interactive dashboard to preview and manage follow-up emails
+- **Subject Blacklist**: Hide and persist subjects you never want to follow up on again
 - **Progressive Rendering**: Stream email data in real-time for responsive UI experience
 - **Email Threading**: Maintain proper email threading with Message-ID headers
 - **Previous Message Attachment**: Automatically include previous messages in follow-up emails like Gmail web version
@@ -74,6 +75,7 @@ Set these environment variables to customize behavior:
 | `MAX_DAYS` | Integer | `30` | Maximum days to look back for emails |
 | `BATCH_SIZE` | Integer | `20` | Number of messages per API batch |
 | `MAX_FOLLOW_UPS` | Integer | `3` | Maximum follow-ups per thread |
+| `BLACKLIST_FILE` | String | `subject_blacklist.txt` | Flat file used to persist blacklisted subjects |
 | `SENDER_NAME` | String | `Your Name` | Name to use in email signatures |
 | `SENDER_EMAIL` | String | `your-email@example.com` | Email address for follow-ups |
 | `SENDER_PHONE` | String | `(555) 555-5555` | Phone number in signature |
@@ -123,6 +125,7 @@ The interactive web dashboard allows you to:
 - **Preview emails** before sending
 - **Select/deselect** which emails to follow up on
 - **Send bulk follow-ups** with progress tracking
+- **Blacklist subjects** directly from a grouped subject section
 - **Real-time feedback** on send success/failure
 
 ## Email Template
