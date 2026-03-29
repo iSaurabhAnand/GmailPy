@@ -37,6 +37,7 @@ class TestEmailService(unittest.TestCase):
         # Patch datetime inside email_service
         with patch('app.email_service.datetime') as mock_datetime:
             mock_datetime.datetime.utcnow.return_value = self.current_time
+            mock_datetime.datetime.utcfromtimestamp = datetime.datetime.utcfromtimestamp
             mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
             mock_datetime.timedelta = datetime.timedelta
             self.mock_service.users().getProfile().execute.return_value = {'emailAddress': self.test_email}
@@ -68,6 +69,7 @@ class TestEmailService(unittest.TestCase):
     def test_get_threads_with_varying_lengths(self, mock_report):
         with patch('app.email_service.datetime') as mock_datetime:
             mock_datetime.datetime.utcnow.return_value = self.current_time
+            mock_datetime.datetime.utcfromtimestamp = datetime.datetime.utcfromtimestamp
             mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
             mock_datetime.timedelta = datetime.timedelta
             self.mock_service.users().getProfile().execute.return_value = {'emailAddress': self.test_email}
@@ -93,6 +95,50 @@ class TestEmailService(unittest.TestCase):
             self.assertEqual(len(threads), 2)
             for i, thread in enumerate(threads):
                 self.assertEqual(thread['followup_count'], thread_lengths[i] - 1)
+
+    @patch('app.report_service.generate_followup_report')
+    def test_excludes_threads_older_than_max_days(self, mock_report):
+        with patch('app.email_service.datetime') as mock_datetime:
+            mock_datetime.datetime.utcnow.return_value = self.current_time
+            mock_datetime.datetime.utcfromtimestamp = datetime.datetime.utcfromtimestamp
+            mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
+            mock_datetime.timedelta = datetime.timedelta
+            self.mock_service.users().getProfile().execute.return_value = {'emailAddress': self.test_email}
+            self.mock_service.users().messages().list().execute.return_value = {
+                'messages': [
+                    {'threadId': 'within-window'},
+                    {'threadId': 'too-old'}
+                ]
+            }
+
+            recent_base_date = self.current_time - datetime.timedelta(days=4)
+            old_base_date = self.current_time - datetime.timedelta(days=31)
+
+            recent_thread = self.create_mock_thread('recent', 1, recent_base_date)
+            old_thread = self.create_mock_thread('old', 1, old_base_date)
+
+            for thread in (recent_thread, old_thread):
+                for msg in thread['messages']:
+                    msg['payload']['headers'].append({'name': 'From', 'value': self.test_email})
+                thread['messages'][0]['payload']['headers'][0]['value'] = 'Interest in Product'
+
+            thread_responses = {
+                'within-window': recent_thread,
+                'too-old': old_thread,
+            }
+
+            def mock_get_thread(userId, id):
+                mock = MagicMock()
+                mock.execute.return_value = thread_responses[id]
+                return mock
+
+            self.mock_service.users().threads().get.side_effect = mock_get_thread
+
+            threads = email_service.get_threads_to_follow_up(self.mock_service)
+
+            self.assertEqual(len(threads), 1)
+            self.assertEqual(threads[0]['thread_id'], 'within-window')
+            mock_report.assert_called_once()
 
     def test_count_followups_with_varying_subjects(self):
         msgs = [

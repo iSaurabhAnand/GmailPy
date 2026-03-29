@@ -9,6 +9,10 @@ from typing import List, Dict
 from app.config import MIN_DAYS, MAX_DAYS, BATCH_SIZE, MAX_FOLLOW_UPS, DISABLE_SEND_FOLLOWUP
 
 
+def is_within_followup_window(days_since_last: int) -> bool:
+    """Return True when a thread falls inside the configured follow-up window."""
+    return MIN_DAYS <= days_since_last <= MAX_DAYS
+
 
 def get_threads_to_follow_up_generator(service):
     """
@@ -50,8 +54,8 @@ def get_threads_to_follow_up_generator(service):
                 # Check last message date
                 last_msg = thread_messages[-1]
                 last_msg_date = int(last_msg['internalDate']) // 1000
-                days_since_last = (now - datetime.datetime.fromtimestamp(last_msg_date)).days
-                if days_since_last >= MIN_DAYS:
+                days_since_last = (now - datetime.datetime.utcfromtimestamp(last_msg_date)).days
+                if is_within_followup_window(days_since_last):
                     # Check follow-up count
                     followup_count = count_followups(thread_messages)
                     if followup_count < MAX_FOLLOW_UPS:
@@ -60,7 +64,7 @@ def get_threads_to_follow_up_generator(service):
                             'thread_id': thread_id,
                             'subject': get_header(last_msg, 'subject'),
                             'to': get_header(last_msg, 'to'),
-                            'date': datetime.datetime.fromtimestamp(last_msg_date).strftime('%Y-%m-%d %H:%M:%S'),
+                            'date': datetime.datetime.utcfromtimestamp(last_msg_date).strftime('%Y-%m-%d %H:%M:%S'),
                             'snippet': last_msg.get('snippet', ''),
                             'followup_count': followup_count,
                             'days_since_last': days_since_last
